@@ -23,17 +23,17 @@ const tooltips = {
   u: "Critical shear perimeter (u): The length of the line geometrically similar to the boundary of the effective area. Must be positive.",
   dom: "Mean effective depth (dom): Average value around the critical shear perimeter. Typically ranges from 100-1000mm.",
   fc: "Concrete strength (f'c): Characteristic compressive strength of concrete. Usually between 20-100 MPa.",
-  sigmacp: "Effective prestress (σcp): Average intensity of effective prestress in concrete. Typically 0-10 MPa.",
+  sigmacp: "Effective prestress (σcp): Average intensity of effective prestress in concrete. Can be 0 or positive.",
   betah: "Ratio (βh): Ratio of longest to shortest dimension of the effective loaded area. Must be greater than 1.",
 };
 
 function App() {
   const [values, setValues] = useState<InputValues>({
-    u: 0,
-    dom: 0,
-    fc: 0,
-    sigmacp: 0,
-    betah: 0,
+    u: 2000,
+    dom: 500,
+    fc: 32,
+    sigmacp: 0.1,
+    betah: 0.5,
     hasShearReinforcement: false,
   });
 
@@ -59,6 +59,29 @@ function App() {
     }
   };
 
+  useEffect(() => {
+    const newErrors: Record<string, string> = {};
+    Object.entries(values).forEach(([key, value]) => {
+      if (key === 'sigmacp') {
+        if (value < 0) {
+          newErrors[key] = 'Value must be 0 or positive';
+        }
+      } else if (typeof value === 'number' && value <= 0) {
+        newErrors[key] = 'Value must be greater than 0';
+      }
+    });
+
+    setErrors(newErrors);
+
+    if (Object.keys(newErrors).length === 0 && 
+        values.u > 0 && values.dom > 0 && values.fc > 0 && values.betah > 0 && values.sigmacp >= 0) {
+      const calculatedResult = calculateVuo(values);
+      setResult(calculatedResult / 1000); // Convert N to kN
+    } else {
+      setResult(null);
+    }
+  }, [values]);
+
   const handleInputChange = (field: keyof InputValues, value: string | boolean) => {
     if (typeof value === 'boolean') {
       setValues(prev => ({ ...prev, [field]: value }));
@@ -74,29 +97,13 @@ function App() {
     }
   };
 
-  const handleCalculate = () => {
-    const newErrors: Record<string, string> = {};
-    Object.entries(values).forEach(([key, value]) => {
-      if (typeof value === 'number' && value <= 0) {
-        newErrors[key] = 'Value must be greater than 0';
-      }
-    });
-
-    if (Object.keys(newErrors).length === 0) {
-      const result = calculateVuo(values);
-      setResult(result);
-    } else {
-      setErrors(newErrors);
-    }
-  };
-
   const handleReset = () => {
     setValues({
-      u: 0,
-      dom: 0,
-      fc: 0,
-      sigmacp: 0,
-      betah: 0,
+      u: 2000,
+      dom: 500,
+      fc: 32,
+      sigmacp: 0.1,
+      betah: 0.5,
       hasShearReinforcement: false,
     });
     setResult(null);
@@ -123,28 +130,26 @@ function App() {
   const handleDownload = () => {
     if (savedResults.length === 0) return;
 
-    const data = savedResults.map(saved => `
-Calculation ID: ${saved.id}
-Timestamp: ${saved.timestamp}
+    const headers = ['Timestamp', 'u (mm)', 'dom (mm)', "f'c (MPa)", 'σcp (MPa)', 'βh', 'Shear Reinforcement', 'Vuo (kN)'];
+    const csvContent = [
+      headers.join(','),
+      ...savedResults.map(saved => [
+        saved.timestamp,
+        saved.values.u,
+        saved.values.dom,
+        saved.values.fc,
+        saved.values.sigmacp,
+        saved.values.betah,
+        saved.values.hasShearReinforcement ? 'Yes' : 'No',
+        saved.result.toPrecision(3)
+      ].join(','))
+    ].join('\n');
 
-Input Parameters:
-Critical shear perimeter (u): ${saved.values.u}
-Mean effective depth (dom): ${saved.values.dom}
-Concrete strength (fc): ${saved.values.fc}
-Effective prestress (σcp): ${saved.values.sigmacp}
-Ratio βh: ${saved.values.betah}
-Shear Reinforcement: ${saved.values.hasShearReinforcement ? 'Yes' : 'No'}
-
-Result:
-Ultimate shear strength (Vuo): ${saved.result.toFixed(2)} N
-----------------------------------------
-`).join('\n');
-
-    const blob = new Blob([data], { type: 'text/plain' });
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'shear-strength-calculations.txt';
+    a.download = 'shear-strength-calculations.csv';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -220,12 +225,6 @@ Ultimate shear strength (Vuo): ${saved.result.toFixed(2)} N
 
           <div className="flex justify-center space-x-4 mb-8">
             <button
-              onClick={handleCalculate}
-              className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            >
-              Calculate
-            </button>
-            <button
               onClick={handleReset}
               className="px-6 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 flex items-center"
             >
@@ -238,7 +237,7 @@ Ultimate shear strength (Vuo): ${saved.result.toFixed(2)} N
             <div className="bg-green-50 p-6 rounded-lg mb-8">
               <h3 className="text-lg font-semibold text-green-800 mb-2">Results</h3>
               <p className="text-green-700 mb-4">
-                Ultimate shear strength (V<sub>uo</sub>): {result.toFixed(2)} N
+                Ultimate shear strength (V<sub>uo</sub>): {result.toPrecision(3)} kN
               </p>
               <div className="flex space-x-4">
                 <button
@@ -253,7 +252,7 @@ Ultimate shear strength (Vuo): ${saved.result.toFixed(2)} N
                   className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
                 >
                   <Download size={16} className="mr-2" />
-                  Download All Results
+                  Download Results as CSV
                 </button>
               </div>
             </div>
@@ -280,15 +279,15 @@ Ultimate shear strength (Vuo): ${saved.result.toFixed(2)} N
                         {saved.timestamp}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
-                        <div>u: {saved.values.u}</div>
-                        <div>dom: {saved.values.dom}</div>
-                        <div>fc: {saved.values.fc}</div>
-                        <div>σcp: {saved.values.sigmacp}</div>
+                        <div>u: {saved.values.u} mm</div>
+                        <div>dom: {saved.values.dom} mm</div>
+                        <div>fc: {saved.values.fc} MPa</div>
+                        <div>σcp: {saved.values.sigmacp} MPa</div>
                         <div>βh: {saved.values.betah}</div>
                         <div>Reinforced: {saved.values.hasShearReinforcement ? 'Yes' : 'No'}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {saved.result.toFixed(2)} N
+                        {saved.result.toPrecision(3)} kN
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         <button
